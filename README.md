@@ -8,6 +8,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
+| v14 | [`v14`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v14) | [`91a23f5`](https://github.com/macbre/push-to-ghcr/commit/91a23f5ca90410345e37d8252ae43b0b89942c6f) |
 | v17 | [`v17`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v17) | [`2024e33`](https://github.com/macbre/push-to-ghcr/commit/2024e3307b11643712d00ef459b48ef7921dab08) |
 
 ## Privacy

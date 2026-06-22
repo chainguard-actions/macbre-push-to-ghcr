@@ -1,0 +1,276 @@
+name: "push-to-ghcr"
+author: "@macbre"
+description: "This action simplifies pushes of Docker images ot ghcr.io repository"
+# https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions#branding
+branding:
+  icon: "arrow-up-circle"
+  color: "blue"
+inputs:
+  github_token:
+    description: "Your secrets.GITHUB_TOKEN"
+    required: true
+  image_name:
+    description: "Image name, e.g. my-user-name/my-repo (will be lowercased)"
+    required: true
+  dockerfile:
+    description: "A path to the Dockerfile (if it's not in the repository's root directory)"
+    required: false
+    default: "./Dockerfile"
+  context:
+    description: "A path to the context in which the build will happen, see https://docs.docker.com/engine/reference/commandline/build/"
+    required: false
+    default: "."
+  repository:
+    description: "Docker repository to push an image to, defaults to ghcr.io"
+    required: true
+    default: "ghcr.io"
+  docker_io_user:
+    description: "A username to use when pushing an image to docker.io (defaults to the github.actor)"
+    required: false
+  docker_io_token:
+    description: "Your docker.io token created via https://hub.docker.com/settings/security"
+    required: false
+  image_tag:
+    description: Image tag or tags, e.g. latest or "1.0.0,latest". Only tag names are accepted. Will overwrite the latest tag on a push, and have no effect on a release.
+    required: false
+  # https://docs.docker.com/build/guide/build-args/
+  build_arg:
+    description: Additional build argument to be passed to the Dockerfile (e.g. NODE_AUTH_TOKEN=s3cr3t)
+    required: false
+    default: "FOO=bar"
+  extra_args:
+    description: Additional arguments to be passed to "docker build".
+    required: false
+    default: ""
+  # https://docs.docker.com/build/building/multi-platform/
+  platforms:
+    description: "Comma-separated list of target platforms for the build (e.g. linux/amd64,linux/arm64). When set, uses docker buildx for multi-platform builds and pushes directly to the registry."
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    # https://docs.docker.com/build/drivers/docker-container/#qemu
+    - name: Set up QEMU for multi-platform builds
+      if: ${{ inputs.platforms != '' }}
+      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+    # https://docs.docker.com/build/ci/github-actions/multi-platform/
+    - name: Set up Docker Buildx
+      if: ${{ inputs.platforms != '' }}
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+    # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
+    - name: Log in to the Container registry
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        DOCKER_BUILDKIT: 1
+        DOCKER_IO_USER: ${{ inputs.docker_io_user }}
+        DOCKER_IO_TOKEN: ${{ inputs.docker_io_token }}
+        IMAGE_NAME: ${{ inputs.image_name }}
+        IMAGE_TAG: ${{ inputs.image_tag }}
+        GITHUB_ACTOR: ${{ github.actor }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_REF: ${{ github.ref }}
+        GITHUB_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        INPUT_DOCKERFILE: ${{ inputs.dockerfile }}
+        INPUT_BUILD_ARG: ${{ inputs.build_arg }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra_args }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_CONTEXT: ${{ inputs.context }}
+      run: |
+        echo "Using $(docker -v)"
+
+        echo "::group::Logging into the GitHub Container registry (ghcr.io) ..."
+        echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        echo "::endgroup::"
+
+        echo "::group::Set commit tag and image name"
+        # github.ref: For workflows triggered by pull_request, this is the pull request merge branch.
+        #             For workflows triggered by release, this is the release tag created.
+        # https://docs.github.com/en/actions/reference/contexts-reference
+        echo "Event received: '${GITHUB_EVENT_NAME}' (with a reference '${GITHUB_REF}' / tag name '${GITHUB_RELEASE_TAG_NAME}')"
+
+        IMAGE_TAGS=()
+        add_image_tag() {
+          if [ -z "$1" ]; then
+            return
+          fi
+
+          if [[ "$1" == *"/"* || "$1" == *":"* ]]; then
+            echo "::error::The image_tag input accepts tag names only, not full image references: '$1'"
+            exit 1
+          fi
+
+          for EXISTING_TAG in "${IMAGE_TAGS[@]}"; do
+            if [ "${EXISTING_TAG}" = "$1" ]; then
+              return
+            fi
+          done
+
+          IMAGE_TAGS+=("$1")
+        }
+
+        if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+          export COMMIT_TAG="${GITHUB_RELEASE_TAG_NAME}"
+          export COMMIT_TAG=${COMMIT_TAG//v/}
+          add_image_tag "${COMMIT_TAG}"
+        else
+          if [ -z "${IMAGE_TAG}" ]; then
+            export COMMIT_TAG=latest
+            add_image_tag "${COMMIT_TAG}"
+          else
+            export IMAGE_TAG_LIST=${IMAGE_TAG//,/ }
+
+            read -ra IMAGE_TAG_ARRAY <<< "${IMAGE_TAG_LIST}"
+            for TAG in "${IMAGE_TAG_ARRAY[@]}"; do
+              add_image_tag "${TAG}"
+            done
+
+            if [ ${#IMAGE_TAGS[@]} -eq 0 ]; then
+              echo "::error::The image_tag input did not contain any tags."
+              exit 1
+            fi
+
+            export COMMIT_TAG=${IMAGE_TAGS[0]}
+          fi
+        fi
+
+        # lowercase the image name, see https://github.com/macbre/push-to-ghcr/issues/12
+        export IMAGE_NAME=$(echo "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+
+        echo "Tagging with ${IMAGE_TAGS[*]}"
+        echo "::endgroup::"
+
+        export BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        export GITHUB_URL="https://github.com/${GITHUB_REPOSITORY}"
+        GHCR_TAG_ARGS=()
+        DOCKER_IO_TAG_ARGS=()
+
+        for TAG in "${IMAGE_TAGS[@]}"; do
+          GHCR_TAG_ARGS+=(--tag "${INPUT_REPOSITORY}/${IMAGE_NAME}:${TAG}")
+          if [ -n "${DOCKER_IO_TOKEN}" ]; then
+            DOCKER_IO_TAG_ARGS+=(--tag "docker.io/${IMAGE_NAME}:${TAG}")
+          fi
+        done
+
+        # Common build arguments and labels used by both docker build and docker buildx build
+        COMMON_ARGS=(
+          --file "${INPUT_DOCKERFILE}"
+          --build-arg BUILDKIT_INLINE_CACHE=1
+          --build-arg "BUILD_DATE=${BUILD_DATE}"
+          --build-arg "GITHUB_SHA=${GITHUB_SHA}"
+          --build-arg "${INPUT_BUILD_ARG}"
+          "${GHCR_TAG_ARGS[@]}"
+          "${DOCKER_IO_TAG_ARGS[@]}"
+          --label "org.label-schema.build-date=${BUILD_DATE}"
+          --label "org.label-schema.vcs-url=${GITHUB_URL}"
+          --label "org.label-schema.vcs-ref=${GITHUB_SHA}"
+          --label "org.opencontainers.image.created=${BUILD_DATE}"
+          --label "org.opencontainers.image.source=${GITHUB_URL}"
+          --label "org.opencontainers.image.revision=${GITHUB_SHA}"
+        )
+
+        # Append extra_args if provided
+        if [ -n "${INPUT_EXTRA_ARGS}" ]; then
+          read -ra EXTRA_ARGS_ARRAY <<< "${INPUT_EXTRA_ARGS}"
+          COMMON_ARGS+=("${EXTRA_ARGS_ARRAY[@]}")
+        fi
+
+        if [ -n "${INPUT_PLATFORMS}" ]; then
+          # Multi-platform build: use docker buildx, push directly to registry
+          # Log into docker.io before build so buildx can push to it inline
+          if [ -z "${DOCKER_IO_TOKEN}" ]; then
+            echo "::notice::NOT pushing the Docker image to docker.io ... Provide 'docker_io_token' if needed."
+            DOCKER_IO_TAGS=()
+          else
+            if [ -z "${DOCKER_IO_USER}" ]; then
+              export DOCKER_IO_USER="${GITHUB_ACTOR}"
+            fi
+            echo "::group::Logging into docker.io as ${DOCKER_IO_USER} ..."
+            echo "${DOCKER_IO_TOKEN}" | docker login docker.io -u "${DOCKER_IO_USER}" --password-stdin
+            echo "::endgroup::"
+            DOCKER_IO_TAGS=(--tag "docker.io/${IMAGE_NAME}:${COMMIT_TAG}")
+          fi
+
+          echo "::group::Building and pushing multi-platform Docker image: ${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG} (platforms: ${INPUT_PLATFORMS}) ..."
+          set -x
+          >&0 docker buildx build \
+            --platform "${INPUT_PLATFORMS}" \
+            --cache-from "${INPUT_REPOSITORY}/${IMAGE_NAME}:latest" \
+            "${COMMON_ARGS[@]}" \
+            --tag "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" \
+            "${DOCKER_IO_TAGS[@]}" \
+            --push \
+            "${INPUT_CONTEXT}"
+          set +x
+          echo "::endgroup::"
+        else
+          # Single-platform build: use docker build, push separately
+          echo "::group::Building the Docker image: ${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG} from ${INPUT_DOCKERFILE} in ${INPUT_CONTEXT} context ..."
+
+          # https://docs.docker.com/develop/develop-images/build_enhancements/
+          # https://docs.docker.com/engine/reference/commandline/build/#specifying-external-cache-sources
+          set -x
+          >&0 docker build \
+            --cache-from "${INPUT_REPOSITORY}/${IMAGE_NAME}:latest" \
+            "${COMMON_ARGS[@]}" \
+            --tag "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" \
+            --tag "docker.io/${IMAGE_NAME}:${COMMIT_TAG}" \
+            "${INPUT_CONTEXT}"
+          set +x
+
+          echo "::endgroup::"
+
+          echo "::group::Inspecting the image ..."
+          docker images
+
+          echo "Labels:"
+          docker image inspect "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" | jq '.[].Config.Labels'
+
+          echo "Env variables:"
+          docker image inspect "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" | jq '.[].Config.Env'
+          echo "::endgroup::"
+
+          echo "::group::Pushing the Docker image to ${INPUT_REPOSITORY} ..."
+          for TAG in "${IMAGE_TAGS[@]}"; do
+            >&0 docker push "${INPUT_REPOSITORY}/${IMAGE_NAME}:${TAG}" && echo "Pushed ${INPUT_REPOSITORY}/${IMAGE_NAME}:${TAG}"
+          done
+          echo "::endgroup::"
+
+          if [ -z "${DOCKER_IO_TOKEN}" ]; then
+            echo "::notice::NOT pushing the Docker image to docker.io ... Provide 'docker_io_token' if needed."
+          else
+            if [ -z "${DOCKER_IO_USER}" ]; then
+              export DOCKER_IO_USER="${GITHUB_ACTOR}"
+            fi
+
+            echo "${DOCKER_IO_TOKEN}" | docker login docker.io -u "${DOCKER_IO_USER}" --password-stdin
+
+            echo "::group::Pushing the Docker image to docker.io/${IMAGE_NAME} ..."
+            for TAG in "${IMAGE_TAGS[@]}"; do
+              >&0 docker push "docker.io/${IMAGE_NAME}:${TAG}" && echo "Pushed docker.io/${IMAGE_NAME}:${TAG}"
+            done
+            echo "::endgroup::"
+
+            echo "::endgroup::"
+          fi
+        fi

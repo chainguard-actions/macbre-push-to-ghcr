@@ -1,0 +1,86 @@
+name: Test version tag handling on push event
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up comprehensive docker mock
+        run: |
+          mkdir -p "$HOME/bin"
+          MOCK="$HOME/bin/docker"
+          {
+            printf '#!/bin/bash\n'
+            printf 'CMD="$1"\n'
+            printf 'case "$CMD" in\n'
+            printf '  -v|version)\n'
+            printf '    echo "Docker version 24.0.0, build abc1234"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  login)\n'
+            printf '    echo "Login Succeeded (mocked)"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  build)\n'
+            printf '    echo "Successfully built abc123def456 (mocked)"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  push)\n'
+            printf '    echo "Pushed (mocked): $2"\n'
+            printf '    echo "$2" >> /tmp/docker-pushed-images.txt\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  images)\n'
+            printf '    echo "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE"\n'
+            printf '    echo "localhost:5000/test-user/test-repo   v1.2.3   abc123   1 second ago   10MB"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  image)\n'
+            printf '    SUBCMD="$2"\n'
+            printf '    if [ "$SUBCMD" = "inspect" ]; then\n'
+            printf '      echo '"'"'[{"Config":{"Labels":{"org.opencontainers.image.created":"2024-01-01T00:00:00Z"},"Env":[]}}]'"'"'\n'
+            printf '      exit 0\n'
+            printf '    fi\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  *)\n'
+            printf '    exec /usr/bin/docker "$@"\n'
+            printf '    ;;\n'
+            printf 'esac\n'
+          } > "$MOCK"
+          chmod +x "$MOCK"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Verify mock docker is in PATH
+        run: |
+          which docker
+          docker -v
+          echo "fake" | docker login ghcr.io -u test --password-stdin && echo "mock login works"
+
+      - id: action
+        uses: .
+        with:
+          github_token: fake-token-for-testing
+          image_name: test-user/test-repo
+          repository: localhost:5000
+          dockerfile: ./Dockerfile
+          context: .
+          image_tag: v1.2.3
+
+      - name: Assert image was built and pushed with version tag
+        run: |
+          echo "Checking docker push calls..."
+          if [ -f /tmp/docker-pushed-images.txt ]; then
+            cat /tmp/docker-pushed-images.txt
+            if grep -q "v1.2.3" /tmp/docker-pushed-images.txt; then
+              echo "PASS: image was pushed with version tag 'v1.2.3'"
+            else
+              echo "FAIL: expected push with tag 'v1.2.3'"
+              exit 1
+            fi
+          else
+            echo "FAIL: no docker push calls recorded"
+            exit 1
+          fi

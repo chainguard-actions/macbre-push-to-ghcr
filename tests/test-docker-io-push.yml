@@ -1,0 +1,121 @@
+name: Test push to docker.io with docker_io_user and docker_io_token
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up comprehensive docker mock
+        run: |
+          mkdir -p "$HOME/bin"
+          MOCK="$HOME/bin/docker"
+          {
+            printf '#!/bin/bash\n'
+            printf 'CMD="$1"\n'
+            printf 'case "$CMD" in\n'
+            printf '  -v|version)\n'
+            printf '    echo "Docker version 24.0.0, build abc1234"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  login)\n'
+            printf '    # Record which registry was logged into\n'
+            printf '    echo "$3" >> /tmp/docker-login-registries.txt\n'
+            printf '    echo "Login Succeeded (mocked)"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  build)\n'
+            printf '    echo "Successfully built abc123def456 (mocked)"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  push)\n'
+            printf '    echo "Pushed (mocked): $2"\n'
+            printf '    echo "$2" >> /tmp/docker-pushed-images.txt\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  images)\n'
+            printf '    echo "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE"\n'
+            printf '    echo "localhost:5000/myorg/myrepo   latest   abc123   1 second ago   10MB"\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  image)\n'
+            printf '    SUBCMD="$2"\n'
+            printf '    if [ "$SUBCMD" = "inspect" ]; then\n'
+            printf '      echo '"'"'[{"Config":{"Labels":{"org.opencontainers.image.created":"2024-01-01T00:00:00Z","org.opencontainers.image.source":"https://github.com/myorg/myrepo","org.opencontainers.image.revision":"abc123"},"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]}}]'"'"'\n'
+            printf '      exit 0\n'
+            printf '    fi\n'
+            printf '    exit 0\n'
+            printf '    ;;\n'
+            printf '  *)\n'
+            printf '    exec /usr/bin/docker "$@"\n'
+            printf '    ;;\n'
+            printf 'esac\n'
+          } > "$MOCK"
+          chmod +x "$MOCK"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Verify mock docker is in PATH
+        run: |
+          which docker
+          docker -v
+          echo "fake" | docker login ghcr.io -u test --password-stdin && echo "mock login works"
+
+      - id: action
+        uses: .
+        with:
+          github_token: fake-token-for-testing
+          image_name: myorg/myrepo
+          repository: localhost:5000
+          dockerfile: ./Dockerfile
+          context: .
+          docker_io_user: my-dockerhub-user
+          docker_io_token: fake-dockerhub-token
+
+      - name: Assert image was pushed to primary registry
+        run: |
+          echo "Checking docker push calls..."
+          if [ -f /tmp/docker-pushed-images.txt ]; then
+            cat /tmp/docker-pushed-images.txt
+            if grep -q "localhost:5000/myorg/myrepo" /tmp/docker-pushed-images.txt; then
+              echo "PASS: image was pushed to primary registry"
+            else
+              echo "FAIL: expected push to localhost:5000/myorg/myrepo"
+              exit 1
+            fi
+          else
+            echo "FAIL: no docker push calls recorded"
+            exit 1
+          fi
+
+      - name: Assert image was also pushed to docker.io
+        run: |
+          echo "Checking docker.io push..."
+          if [ -f /tmp/docker-pushed-images.txt ]; then
+            cat /tmp/docker-pushed-images.txt
+            if grep -q "docker.io/myorg/myrepo" /tmp/docker-pushed-images.txt; then
+              echo "PASS: image was pushed to docker.io"
+            else
+              echo "FAIL: expected push to docker.io/myorg/myrepo"
+              exit 1
+            fi
+          else
+            echo "FAIL: no docker push calls recorded"
+            exit 1
+          fi
+
+      - name: Assert docker.io login was performed
+        run: |
+          echo "Checking docker login registries..."
+          if [ -f /tmp/docker-login-registries.txt ]; then
+            cat /tmp/docker-login-registries.txt
+            if grep -q "docker.io" /tmp/docker-login-registries.txt; then
+              echo "PASS: docker.io login was performed"
+            else
+              echo "FAIL: expected login to docker.io"
+              exit 1
+            fi
+          else
+            echo "FAIL: no docker login calls recorded"
+            exit 1
+          fi

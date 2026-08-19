@@ -77,11 +77,12 @@ runs:
         GITHUB_REF: ${{ github.ref }}
         GITHUB_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
         GITHUB_REPOSITORY: ${{ github.repository }}
-        INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_DOCKERFILE: ${{ inputs.dockerfile }}
-        INPUT_CONTEXT: ${{ inputs.context }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_CACHE_FROM_REPO: ${{ inputs.repository }}
         INPUT_BUILD_ARG: ${{ inputs.build_arg }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra_args }}
+        INPUT_CONTEXT: ${{ inputs.context }}
       run: |
         echo "Using $(docker -v)"
 
@@ -97,7 +98,7 @@ runs:
 
         if [ "$GITHUB_EVENT_NAME" = "release" ]; then
           export COMMIT_TAG="$GITHUB_RELEASE_TAG_NAME"
-          export COMMIT_TAG="${COMMIT_TAG//v/}"
+          export COMMIT_TAG=${COMMIT_TAG//v/}
         else
           if [ -z "${IMAGE_TAG}" ]; then
             export COMMIT_TAG=latest
@@ -115,14 +116,22 @@ runs:
         export BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         export GITHUB_URL=https://github.com/"$GITHUB_REPOSITORY"
 
-        echo "::group::Building the Docker image: ${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG} from ${INPUT_DOCKERFILE} in ${INPUT_CONTEXT} context ..."
+        echo "::group::Building the Docker image: $INPUT_REPOSITORY/${IMAGE_NAME}:${COMMIT_TAG} from $INPUT_DOCKERFILE in $INPUT_CONTEXT context ..."
 
         # https://docs.docker.com/develop/develop-images/build_enhancements/
         # https://docs.docker.com/engine/reference/commandline/build/#specifying-external-cache-sources
         set -x
+
+        # Tokenize extra_args (a whitespace-separated list that may contain quoted sub-commands)
+        extra_args_array=()
+        if [ -n "$INPUT_EXTRA_ARGS" ]; then
+          while IFS= read -r -d '' t; do extra_args_array+=("$t"); done \
+            < <(printf '%s' "$INPUT_EXTRA_ARGS" | xargs printf '%s\0')
+        fi
+
         >&0 docker build \
           --file "$INPUT_DOCKERFILE" \
-          --cache-from "${INPUT_REPOSITORY}/${IMAGE_NAME}:latest" \
+          --cache-from "$INPUT_CACHE_FROM_REPO/${IMAGE_NAME}:latest" \
           --build-arg BUILDKIT_INLINE_CACHE=1 \
           \
           --build-arg "BUILD_DATE=${BUILD_DATE}" \
@@ -130,9 +139,9 @@ runs:
           \
           --build-arg "$INPUT_BUILD_ARG" \
           \
-          --tag "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" \
+          --tag "$INPUT_REPOSITORY/${IMAGE_NAME}:${COMMIT_TAG}" \
           --tag "docker.io/${IMAGE_NAME}:${COMMIT_TAG}" \
-          ${INPUT_EXTRA_ARGS:+"$INPUT_EXTRA_ARGS"} \
+          "${extra_args_array[@]}" \
           \
           --label "org.label-schema.build-date=${BUILD_DATE}" \
           --label "org.label-schema.vcs-url=${GITHUB_URL}" \
@@ -150,15 +159,15 @@ runs:
         docker images
 
         echo "Labels:"
-        docker image inspect "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" | jq '.[].Config.Labels'
+        docker image inspect "$INPUT_REPOSITORY/${IMAGE_NAME}:${COMMIT_TAG}" | jq '.[].Config.Labels'
 
         echo "Env variables:"
-        docker image inspect "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" | jq '.[].Config.Env'
+        docker image inspect "$INPUT_REPOSITORY/${IMAGE_NAME}:${COMMIT_TAG}" | jq '.[].Config.Env'
 
         echo "::endgroup::"
 
-        echo "::group::Pushing the Docker image to ${INPUT_REPOSITORY} ..."
-        >&0 docker push "${INPUT_REPOSITORY}/${IMAGE_NAME}:${COMMIT_TAG}" && echo "Pushed"
+        echo "::group::Pushing the Docker image to $INPUT_REPOSITORY ..."
+        >&0 docker push "$INPUT_REPOSITORY/${IMAGE_NAME}:${COMMIT_TAG}" && echo "Pushed"
         echo "::endgroup::"
 
         if [ -z "${DOCKER_IO_TOKEN}" ]; then

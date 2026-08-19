@@ -1,4 +1,4 @@
-name: Test basic push (latest tag) to local registry
+name: Test image name is lowercased automatically
 on:
   workflow_dispatch:
 jobs:
@@ -11,7 +11,6 @@ jobs:
         run: |
           sudo mkdir -p /etc/docker
           echo '{"insecure-registries":["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
-          # Restart docker daemon - try systemctl first, fall back to pkill/start
           if sudo systemctl restart docker 2>/dev/null; then
             echo "Restarted docker via systemctl"
           else
@@ -20,7 +19,6 @@ jobs:
             sudo dockerd --insecure-registry localhost:5000 &>/tmp/dockerd.log &
             sleep 5
           fi
-          # Wait for docker to be ready
           for i in $(seq 1 15); do
             if docker info > /dev/null 2>&1; then
               echo "Docker is ready"
@@ -43,25 +41,27 @@ jobs:
             sleep 2
           done
 
-      - name: Run push-to-ghcr action with default latest tag (local registry)
+      - name: Run push-to-ghcr action with uppercase image name
         id: action
         uses: .
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          image_name: testowner/test-push-to-ghcr
+          # Use uppercase letters in the image name - action should lowercase it
+          image_name: TestOwner/TEST-UPPERCASE-IMAGE
           dockerfile: tests/fixtures/Dockerfile
           context: tests/fixtures
           repository: localhost:5000
+          image_tag: "lowercase-test"
 
-      - name: Assert image was built and pushed to local registry
+      - name: Assert image was pushed with lowercased name
         run: |
-          echo "Verifying the image exists in local registry..."
-          IMAGE="localhost:5000/testowner/test-push-to-ghcr:latest"
+          # The action lowercases the image name, so TEST-UPPERCASE-IMAGE becomes test-uppercase-image
+          IMAGE="localhost:5000/testowner/test-uppercase-image:lowercase-test"
           echo "Pulling image: $IMAGE"
           if docker pull "$IMAGE"; then
-            echo "PASS: image successfully pulled from local registry"
+            echo "PASS: image with lowercased name successfully pulled from local registry"
           else
-            echo "FAIL: could not pull image from local registry"
+            echo "FAIL: could not pull image with lowercased name from local registry"
             exit 1
           fi
 

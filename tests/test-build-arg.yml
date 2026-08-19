@@ -1,4 +1,4 @@
-name: Test basic push (latest tag) to local registry
+name: Test push with custom build arg to local registry
 on:
   workflow_dispatch:
 jobs:
@@ -11,7 +11,6 @@ jobs:
         run: |
           sudo mkdir -p /etc/docker
           echo '{"insecure-registries":["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
-          # Restart docker daemon - try systemctl first, fall back to pkill/start
           if sudo systemctl restart docker 2>/dev/null; then
             echo "Restarted docker via systemctl"
           else
@@ -20,7 +19,6 @@ jobs:
             sudo dockerd --insecure-registry localhost:5000 &>/tmp/dockerd.log &
             sleep 5
           fi
-          # Wait for docker to be ready
           for i in $(seq 1 15); do
             if docker info > /dev/null 2>&1; then
               echo "Docker is ready"
@@ -43,7 +41,7 @@ jobs:
             sleep 2
           done
 
-      - name: Run push-to-ghcr action with default latest tag (local registry)
+      - name: Run push-to-ghcr action with custom build arg
         id: action
         uses: .
         with:
@@ -52,16 +50,17 @@ jobs:
           dockerfile: tests/fixtures/Dockerfile
           context: tests/fixtures
           repository: localhost:5000
+          image_tag: "build-arg-test"
+          build_arg: "MY_CUSTOM_ARG=hello_world"
 
-      - name: Assert image was built and pushed to local registry
+      - name: Assert image was built and pushed with custom build arg
         run: |
-          echo "Verifying the image exists in local registry..."
-          IMAGE="localhost:5000/testowner/test-push-to-ghcr:latest"
+          IMAGE="localhost:5000/testowner/test-push-to-ghcr:build-arg-test"
           echo "Pulling image: $IMAGE"
           if docker pull "$IMAGE"; then
-            echo "PASS: image successfully pulled from local registry"
+            echo "PASS: image built with custom build arg successfully pulled from local registry"
           else
-            echo "FAIL: could not pull image from local registry"
+            echo "FAIL: could not pull image built with custom build arg from local registry"
             exit 1
           fi
 

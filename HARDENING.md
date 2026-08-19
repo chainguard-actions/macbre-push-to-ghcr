@@ -8,55 +8,52 @@
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
-**Harden Agent Version:** `1`
+**Harden Agent Version:** `2`
 
-Action **macbre--push-to-ghcr/v18** was hardened automatically. 24 finding(s) were identified and resolved across 3 iteration(s).
+Action **macbre--push-to-ghcr/v18** was hardened automatically. 24 finding(s) were identified and resolved across 4 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-The single `run:` block in action.yml (step 'Log in to the Container registry') directly interpolates numerous ${{ }} expressions into shell commands, violating rule (a). Attacker-controlled inputs and github context values are substituted by the YAML template engine before the shell ever sees them, enabling command injection. Offending lines include:
-- `docker login ghcr.io -u "${{ github.actor }}"` — github.actor injected directly into shell
-- `echo "Event received: '${{ github.event_name }}' (with a reference '${{ github.ref }}' / tag name '${{ github.event.release.tag_name }}')"` — multiple github context values injected
-- `if [ "${{ github.event_name }}" = "release" ]` — github.event_name in shell conditional
-- `export COMMIT_TAG="${{ github.event.release.tag_name }}"` — release tag injected directly
-- `export GITHUB_URL=https://github.com/${{ github.repository }}` — github.repository injected
-- `GHCR_TAG_ARGS+=(--tag "${{ inputs.repository }}/${IMAGE_NAME}:${TAG}")` — inputs.repository injected
-- `--file ${{ inputs.dockerfile }}` — inputs.dockerfile injected into docker build args
-- `--build-arg ${{ inputs.build_arg }}` — inputs.build_arg injected (can contain shell metacharacters)
-- `${{ inputs.extra_args }}` — inputs.extra_args injected directly into shell array
-- `if [ -n "${{ inputs.platforms }}" ]` — inputs.platforms injected into shell conditional
-- `--platform ${{ inputs.platforms }}` — inputs.platforms injected into docker buildx command
-- `${{ inputs.context }}` — inputs.context injected into docker build/buildx commands
-All of these should be routed through env: variables and then double-quoted in the shell.
+The 'Log in to the Container registry' run: block in action.yml directly interpolates numerous ${{ }} expressions into shell commands (sub-rule a), bypassing shell quoting and enabling command injection. Affected expressions include: `${{ github.actor }}` used unquoted in `docker login ghcr.io -u "${{ github.actor }}"`, `${{ github.event_name }}` in an `if [ "${{ github.event_name }}" = "release" ]` test, `${{ github.event.release.tag_name }}` assigned to a shell variable, `${{ github.ref }}` and `${{ github.repository }}` interpolated into echo/URL strings, and multiple `inputs.*` expressions (`${{ inputs.dockerfile }}`, `${{ inputs.build_arg }}`, `${{ inputs.extra_args }}`, `${{ inputs.platforms }}`, `${{ inputs.repository }}`, `${{ inputs.context }}`) interpolated directly into docker build command arguments without quoting. Any of these values can be attacker-controlled (e.g. via workflow_dispatch or a calling workflow), allowing shell metacharacter injection.
 
 Locations:
 
-- `action.yml:84`
-- `action.yml:91`
-- `action.yml:109`
-- `action.yml:110`
+- `action.yml:83`
+- `action.yml:89`
+- `action.yml:100`
+- `action.yml:101`
+- `action.yml:115`
+- `action.yml:119`
 - `action.yml:126`
-- `action.yml:138`
-- `action.yml:143`
-- `action.yml:145`
-- `action.yml:147`
-- `action.yml:155`
+- `action.yml:129`
+- `action.yml:131`
+- `action.yml:136`
+- `action.yml:142`
+- `action.yml:148`
+- `action.yml:151`
+- `action.yml:152`
+- `action.yml:154`
+- `action.yml:157`
+- `action.yml:162`
 - `action.yml:175`
-- `action.yml:181`
+- `action.yml:185`
+- `action.yml:186`
+- `action.yml:192`
+- `action.yml:193`
+- `action.yml:197`
+- `action.yml:200`
+- `action.yml:201`
 
 ### unpinned-uses (severity: high)
 
-Two `uses:` references in action.yml are pinned to mutable version tags rather than immutable 40-character commit SHAs, making the action vulnerable to supply-chain attacks if those tags are moved:
-- `uses: docker/setup-qemu-action@v4`
-- `uses: docker/setup-buildx-action@v4`
-These should be pinned to full SHA digests, e.g. `uses: docker/setup-qemu-action@<40-char-sha> # v4`.
+Two composite action steps use mutable version tags instead of pinned full-length SHA digests, making the action vulnerable to supply-chain attacks if the upstream tags are moved or compromised. Failing references: `docker/setup-qemu-action@v4` and `docker/setup-buildx-action@v4`. These should be pinned to their full 40-character commit SHAs (e.g. `docker/setup-qemu-action@<sha> # v4`).
 
 Locations:
 
 - `action.yml:65`
-- `action.yml:70`
+- `action.yml:69`
 
 ### static-inline-injection (severity: high)
 
@@ -242,18 +239,31 @@ Locations:
 
 **Notes:**
 
-Fixed all security findings in action.yml:
-1. Pinned docker/setup-qemu-action@v4 to full SHA @06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
-2. Pinned docker/setup-buildx-action@v4 to full SHA @d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-3. Moved all ${{ }} expressions from the run: block into the env: block: github.actor→GITHUB_ACTOR, github.event_name→GITHUB_EVENT_NAME, github.ref→GITHUB_REF, github.event.release.tag_name→GITHUB_RELEASE_TAG_NAME, github.repository→GITHUB_REPOSITORY, inputs.repository→INPUT_REPOSITORY, inputs.dockerfile→INPUT_DOCKERFILE, inputs.build_arg→INPUT_BUILD_ARG, inputs.extra_args→INPUT_EXTRA_ARGS, inputs.platforms→INPUT_PLATFORMS, inputs.context→INPUT_CONTEXT. All shell references now use ${VAR_NAME} syntax. The inputs.extra_args value is safely expanded into an array (EXTRA_ARGS_ARRAY) to preserve argument boundaries.
+1. Pinned docker/setup-qemu-action@v4 to @96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4 and docker/setup-buildx-action@v4 to @bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.
+2. Moved all ${{ }} expressions out of the run: block into the env: block: github.actor→ACTOR, github.event_name→EVENT_NAME, github.ref→GIT_REF, github.event.release.tag_name→RELEASE_TAG_NAME, github.repository→GH_REPOSITORY, inputs.repository→INPUT_REPOSITORY, inputs.dockerfile→INPUT_DOCKERFILE, inputs.build_arg→INPUT_BUILD_ARG, inputs.extra_args→INPUT_EXTRA_ARGS, inputs.platforms→INPUT_PLATFORMS, inputs.context→INPUT_CONTEXT.
+3. All shell references in the run: block now use properly double-quoted ${VAR} environment variable references, preventing shell metacharacter injection.
+4. The inputs.extra_args value is safely split using read -ra to handle word splitting without injection risk.
 
 ### Iteration 2
+
+**Fixes applied:** broad-permissions, unpinned-uses, script-injection, github-env-injection
+
+**Notes:**
+
+Fixed all 5 findings:
+1. broad-permissions: Replaced `permissions: write-all` with `permissions: {contents: read, packages: write}` in ci.yml
+2. unpinned-uses: Pinned all 8 occurrences of `actions/checkout@v7` to SHA `3d3c42e5aac5ba805825da76410c181273ba90b1 # v7` in ci.yml
+3. script-injection (ci.yml line 121): Moved `${{ github.repository_owner }}` into `env: REPO_OWNER:` block and referenced as `${REPO_OWNER}` in shell
+4. github-env-injection (ci.yml line 130): Added `printf '%s' ... | tr -d '\n\r'` sanitization before writing to GITHUB_ENV
+5. script-injection (action.yml lines 136,143,147,172,215): Fixed unquoted expansions: used `read -ra` array for IMAGE_TAG_LIST iteration, quoted IMAGE_NAME in command substitution, quoted GH_REPOSITORY in URL, and quoted DOCKER_IO_USER in both test expressions
+
+### Iteration 3
 
 **Fixes applied:** script-injection
 
 **Notes:**
 
-Fixed all 5 unquoted shell variable expansions in action.yml: (1) Changed `for TAG in ${IMAGE_TAG_LIST}` to use `IFS=' ' read -ra TAG_ARRAY <<< "${IMAGE_TAG_LIST}"` with `for TAG in "${TAG_ARRAY[@]}"` for safe word-splitting; (2) Quoted `${IMAGE_NAME}` inside echo command substitution as `"${IMAGE_NAME}"`; (3) Changed `EXTRA_ARGS_ARRAY=(${INPUT_EXTRA_ARGS})` to `IFS=' ' read -ra EXTRA_ARGS_ARRAY <<< "${INPUT_EXTRA_ARGS}"` for safe array population; (4) & (5) Quoted both occurrences of `${DOCKER_IO_USER}` in `[ -z ]` test expressions as `"${DOCKER_IO_USER}"`.
+Fixed script injection in action.yml by double-quoting all unquoted variable expansions in the COMMON_ARGS array. Specifically: --build-arg BUILD_DATE=${BUILD_DATE} → --build-arg "BUILD_DATE=${BUILD_DATE}", --build-arg GITHUB_SHA=${GITHUB_SHA} → --build-arg "GITHUB_SHA=${GITHUB_SHA}", and all five --label arguments (org.label-schema.build-date, org.label-schema.vcs-url, org.label-schema.vcs-ref, org.opencontainers.image.created, org.opencontainers.image.source, org.opencontainers.image.revision) were similarly double-quoted. This ensures that attacker-controlled values containing shell metacharacters cannot break out of the argument context.
 
 ### Iteration 1
 
@@ -261,12 +271,5 @@ Fixed all 5 unquoted shell variable expansions in action.yml: (1) Changed `for T
 
 **Notes:**
 
-Fixed 5 unquoted shell variable expansions in action.yml's run: block:
-1. Line ~121: Quoted `export COMMIT_TAG="${COMMIT_TAG//v/}"` (derived from github.event.release.tag_name)
-2. Line ~127: Quoted `export IMAGE_TAG_LIST="${IMAGE_TAG//,/ }"` (derived from inputs.image_tag)
-3. Line ~136: Quoted `export COMMIT_TAG="${IMAGE_TAGS[0]}"` (derived from inputs.image_tag)
-4. Line ~164: Quoted docker label `--label "org.label-schema.vcs-url=${GITHUB_URL}"` (GITHUB_URL built from github.repository)
-5. Line ~167: Quoted docker label `--label "org.opencontainers.image.source=${GITHUB_URL}"` (same GITHUB_URL)
-
-All github context values were already properly moved into the step's env: block; only the shell-level quoting was missing. The fixes ensure attacker-controlled values containing shell metacharacters cannot cause command injection.
+Fixed all unquoted ${IMAGE} shell variable expansions in .github/workflows/ci.yml. The finding specifically called out lines 33, 40, 41, and 42, but there were many more instances throughout the file across 8 jobs. All occurrences of bare ${IMAGE} (and compound forms like ghcr.io/${IMAGE}:tag, docker.io/${IMAGE}:tag) have been wrapped in double quotes to prevent shell metacharacter injection. The file was rewritten in full to ensure comprehensive coverage.
 

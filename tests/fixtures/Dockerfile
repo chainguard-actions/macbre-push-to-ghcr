@@ -1,3 +1,7 @@
-FROM alpine:3.18
-LABEL maintainer="test"
-RUN echo "test image"
+FROM alpine:latest
+ARG BUILD_DATE
+ARG GITHUB_SHA
+ARG FOO
+ARG MY_CUSTOM_ARG
+ENV GITHUB_SHA=$GITHUB_SHA
+RUN echo "Build date: $BUILD_DATE" && echo "SHA: $GITHUB_SHA"

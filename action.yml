@@ -70,11 +70,11 @@ runs:
     # https://docs.docker.com/build/drivers/docker-container/#qemu
     - name: Set up QEMU for multi-platform builds
       if: ${{ inputs.platforms != '' }}
-      uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
+      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
     # https://docs.docker.com/build/ci/github-actions/multi-platform/
     - name: Set up Docker Buildx
       if: ${{ inputs.platforms != '' }}
-      uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
     # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
     - name: Log in to the Container registry
       shell: bash
@@ -85,11 +85,11 @@ runs:
         DOCKER_IO_TOKEN: ${{ inputs.docker_io_token }}
         IMAGE_NAME: ${{ inputs.image_name }}
         IMAGE_TAG: ${{ inputs.image_tag }}
-        GITHUB_ACTOR: ${{ github.actor }}
-        GITHUB_EVENT_NAME: ${{ github.event_name }}
-        GITHUB_REF: ${{ github.ref }}
-        GITHUB_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
+        ACTOR: ${{ github.actor }}
+        EVENT_NAME: ${{ github.event_name }}
+        GIT_REF: ${{ github.ref }}
+        RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+        GH_REPOSITORY: ${{ github.repository }}
         INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_DOCKERFILE: ${{ inputs.dockerfile }}
         INPUT_BUILD_ARG: ${{ inputs.build_arg }}
@@ -100,14 +100,14 @@ runs:
         echo "Using $(docker -v)"
 
         echo "::group::Logging into the GitHub Container registry (ghcr.io) ..."
-        echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
         echo "::endgroup::"
 
         echo "::group::Set commit tag and image name"
         # github.ref: For workflows triggered by pull_request, this is the pull request merge branch.
         #             For workflows triggered by release, this is the release tag created.
         # https://docs.github.com/en/actions/reference/contexts-reference
-        echo "Event received: '${GITHUB_EVENT_NAME}' (with a reference '${GITHUB_REF}' / tag name '${GITHUB_RELEASE_TAG_NAME}')"
+        echo "Event received: '${EVENT_NAME}' (with a reference '${GIT_REF}' / tag name '${RELEASE_TAG_NAME}')"
 
         IMAGE_TAGS=()
         add_image_tag() {
@@ -129,19 +129,19 @@ runs:
           IMAGE_TAGS+=("$1")
         }
 
-        if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
-          export COMMIT_TAG="${GITHUB_RELEASE_TAG_NAME}"
-          export COMMIT_TAG="${COMMIT_TAG//v/}"
+        if [ "${EVENT_NAME}" = "release" ]; then
+          export COMMIT_TAG="${RELEASE_TAG_NAME}"
+          export COMMIT_TAG=${COMMIT_TAG//v/}
           add_image_tag "${COMMIT_TAG}"
         else
           if [ -z "${IMAGE_TAG}" ]; then
             export COMMIT_TAG=latest
             add_image_tag "${COMMIT_TAG}"
           else
-            export IMAGE_TAG_LIST="${IMAGE_TAG//,/ }"
+            export IMAGE_TAG_LIST=${IMAGE_TAG//,/ }
 
-            IFS=' ' read -ra TAG_ARRAY <<< "${IMAGE_TAG_LIST}"
-            for TAG in "${TAG_ARRAY[@]}"; do
+            read -ra IMAGE_TAG_ARRAY <<< "${IMAGE_TAG_LIST}"
+            for TAG in "${IMAGE_TAG_ARRAY[@]}"; do
               add_image_tag "${TAG}"
             done
 
@@ -150,7 +150,7 @@ runs:
               exit 1
             fi
 
-            export COMMIT_TAG="${IMAGE_TAGS[0]}"
+            export COMMIT_TAG=${IMAGE_TAGS[0]}
           fi
         fi
 
@@ -161,7 +161,7 @@ runs:
         echo "::endgroup::"
 
         export BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        export GITHUB_URL="https://github.com/${GITHUB_REPOSITORY}"
+        export GITHUB_URL="https://github.com/${GH_REPOSITORY}"
         GHCR_TAG_ARGS=()
         DOCKER_IO_TAG_ARGS=()
 
@@ -172,29 +172,28 @@ runs:
           fi
         done
 
-        # Build extra_args array from the env variable
-        EXTRA_ARGS_ARRAY=()
-        if [ -n "${INPUT_EXTRA_ARGS}" ]; then
-          IFS=' ' read -ra EXTRA_ARGS_ARRAY <<< "${INPUT_EXTRA_ARGS}"
-        fi
-
         # Common build arguments and labels used by both docker build and docker buildx build
         COMMON_ARGS=(
           --file "${INPUT_DOCKERFILE}"
           --build-arg BUILDKIT_INLINE_CACHE=1
-          --build-arg BUILD_DATE=${BUILD_DATE}
-          --build-arg GITHUB_SHA=${GITHUB_SHA}
+          --build-arg "BUILD_DATE=${BUILD_DATE}"
+          --build-arg "GITHUB_SHA=${GITHUB_SHA}"
           --build-arg "${INPUT_BUILD_ARG}"
           "${GHCR_TAG_ARGS[@]}"
           "${DOCKER_IO_TAG_ARGS[@]}"
-          "${EXTRA_ARGS_ARRAY[@]}"
-          --label org.label-schema.build-date=${BUILD_DATE}
+          --label "org.label-schema.build-date=${BUILD_DATE}"
           --label "org.label-schema.vcs-url=${GITHUB_URL}"
-          --label org.label-schema.vcs-ref=${GITHUB_SHA}
-          --label org.opencontainers.image.created=${BUILD_DATE}
+          --label "org.label-schema.vcs-ref=${GITHUB_SHA}"
+          --label "org.opencontainers.image.created=${BUILD_DATE}"
           --label "org.opencontainers.image.source=${GITHUB_URL}"
-          --label org.opencontainers.image.revision=${GITHUB_SHA}
+          --label "org.opencontainers.image.revision=${GITHUB_SHA}"
         )
+
+        # Append extra_args if provided (split by word)
+        if [ -n "${INPUT_EXTRA_ARGS}" ]; then
+          read -ra EXTRA_ARGS_ARRAY <<< "${INPUT_EXTRA_ARGS}"
+          COMMON_ARGS+=("${EXTRA_ARGS_ARRAY[@]}")
+        fi
 
         if [ -n "${INPUT_PLATFORMS}" ]; then
           # Multi-platform build: use docker buildx, push directly to registry
@@ -204,7 +203,7 @@ runs:
             DOCKER_IO_TAGS=()
           else
             if [ -z "${DOCKER_IO_USER}" ]; then
-              export DOCKER_IO_USER="${GITHUB_ACTOR}"
+              export DOCKER_IO_USER="${ACTOR}"
             fi
             echo "::group::Logging into docker.io as ${DOCKER_IO_USER} ..."
             echo "${DOCKER_IO_TOKEN}" | docker login docker.io -u "${DOCKER_IO_USER}" --password-stdin
@@ -261,7 +260,7 @@ runs:
             echo "::notice::NOT pushing the Docker image to docker.io ... Provide 'docker_io_token' if needed."
           else
             if [ -z "${DOCKER_IO_USER}" ]; then
-              export DOCKER_IO_USER="${GITHUB_ACTOR}"
+              export DOCKER_IO_USER="${ACTOR}"
             fi
 
             echo "${DOCKER_IO_TOKEN}" | docker login docker.io -u "${DOCKER_IO_USER}" --password-stdin

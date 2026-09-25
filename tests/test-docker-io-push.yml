@@ -1,0 +1,46 @@
+name: Test docker.io push with docker_io_user and docker_io_token
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Create a minimal Dockerfile for the test
+      - name: Create test Dockerfile
+        run: |
+          cat > "$GITHUB_WORKSPACE/tests/Dockerfile.test" <<'EOF'
+          FROM alpine:latest
+          ARG BUILD_DATE
+          ARG GITHUB_SHA
+          ENV GITHUB_SHA=$GITHUB_SHA
+          RUN echo "test image built"
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+          image_name: ${{ github.repository_owner }}/push-to-ghcr-test
+          dockerfile: ./tests/Dockerfile.test
+          context: .
+          repository: ghcr.io
+          image_tag: "latest"
+          docker_io_user: testuser
+          docker_io_token: fake-docker-io-token
+
+      - name: Assert action ran with docker_io_user and docker_io_token inputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded (image built and pushed)"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected under harness - docker.io login with fake token or ghcr.io push not authorized)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

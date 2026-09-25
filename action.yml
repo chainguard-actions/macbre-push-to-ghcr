@@ -94,8 +94,8 @@ runs:
         INPUT_BUILD_ARG: ${{ inputs.build_arg }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra_args }}
         INPUT_PLATFORMS: ${{ inputs.platforms }}
-        INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_CONTEXT: ${{ inputs.context }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
       run: |
         echo "Using $(docker -v)"
 
@@ -131,17 +131,16 @@ runs:
 
         if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
           export COMMIT_TAG="${GITHUB_RELEASE_TAG_NAME}"
-          export COMMIT_TAG=${COMMIT_TAG//v/}
+          export COMMIT_TAG="${COMMIT_TAG//v/}"
           add_image_tag "${COMMIT_TAG}"
         else
           if [ -z "${IMAGE_TAG}" ]; then
             export COMMIT_TAG=latest
             add_image_tag "${COMMIT_TAG}"
           else
-            export IMAGE_TAG_LIST=${IMAGE_TAG//,/ }
+            IFS=',' read -ra IMAGE_TAG_LIST <<< "${IMAGE_TAG}"
 
-            read -ra IMAGE_TAG_ARRAY <<< "${IMAGE_TAG_LIST}"
-            for TAG in "${IMAGE_TAG_ARRAY[@]}"; do
+            for TAG in "${IMAGE_TAG_LIST[@]}"; do
               add_image_tag "${TAG}"
             done
 
@@ -150,7 +149,7 @@ runs:
               exit 1
             fi
 
-            export COMMIT_TAG=${IMAGE_TAGS[0]}
+            export COMMIT_TAG="${IMAGE_TAGS[0]}"
           fi
         fi
 
@@ -172,6 +171,14 @@ runs:
           fi
         done
 
+        # Tokenize INPUT_BUILD_ARG (single value, not a list)
+        # Tokenize INPUT_EXTRA_ARGS (list of arguments)
+        extra_args_tokens=()
+        if [ -n "${INPUT_EXTRA_ARGS}" ]; then
+          while IFS= read -r -d '' t; do extra_args_tokens+=("$t"); done \
+            < <(printf '%s' "${INPUT_EXTRA_ARGS}" | xargs printf '%s\0')
+        fi
+
         # Common build arguments and labels used by both docker build and docker buildx build
         COMMON_ARGS=(
           --file "${INPUT_DOCKERFILE}"
@@ -181,6 +188,7 @@ runs:
           --build-arg "${INPUT_BUILD_ARG}"
           "${GHCR_TAG_ARGS[@]}"
           "${DOCKER_IO_TAG_ARGS[@]}"
+          "${extra_args_tokens[@]}"
           --label "org.label-schema.build-date=${BUILD_DATE}"
           --label "org.label-schema.vcs-url=${GITHUB_URL}"
           --label "org.label-schema.vcs-ref=${GITHUB_SHA}"
@@ -188,12 +196,6 @@ runs:
           --label "org.opencontainers.image.source=${GITHUB_URL}"
           --label "org.opencontainers.image.revision=${GITHUB_SHA}"
         )
-
-        # Append extra_args if provided
-        if [ -n "${INPUT_EXTRA_ARGS}" ]; then
-          read -ra EXTRA_ARGS_ARRAY <<< "${INPUT_EXTRA_ARGS}"
-          COMMON_ARGS+=("${EXTRA_ARGS_ARRAY[@]}")
-        fi
 
         if [ -n "${INPUT_PLATFORMS}" ]; then
           # Multi-platform build: use docker buildx, push directly to registry

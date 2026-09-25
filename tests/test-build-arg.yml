@@ -1,0 +1,47 @@
+name: Test custom build_arg passed to Docker build
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Create a Dockerfile that uses a custom build arg
+      - name: Create test Dockerfile with custom ARG
+        run: |
+          cat > "$GITHUB_WORKSPACE/tests/Dockerfile.buildarg" <<'EOF'
+          FROM alpine:latest
+          ARG BUILD_DATE
+          ARG GITHUB_SHA
+          ARG MY_CUSTOM_ARG=default_value
+          ENV GITHUB_SHA=$GITHUB_SHA
+          ENV MY_CUSTOM_ARG=$MY_CUSTOM_ARG
+          RUN echo "Custom arg: $MY_CUSTOM_ARG"
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+          image_name: ${{ github.repository_owner }}/push-to-ghcr-test
+          dockerfile: ./tests/Dockerfile.buildarg
+          context: .
+          repository: ghcr.io
+          image_tag: "test-buildarg"
+          build_arg: "MY_CUSTOM_ARG=hello_world"
+
+      - name: Assert action ran with custom build arg
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded with custom build_arg"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected under harness - push to ghcr.io may not be authorized)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

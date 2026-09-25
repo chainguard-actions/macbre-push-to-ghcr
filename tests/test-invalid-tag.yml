@@ -1,0 +1,46 @@
+name: Test invalid image tag (with slash) fails gracefully
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Create a minimal Dockerfile for the test
+      - name: Create test Dockerfile
+        run: |
+          cat > "$GITHUB_WORKSPACE/tests/Dockerfile.test" <<'EOF'
+          FROM alpine:latest
+          ARG BUILD_DATE
+          ARG GITHUB_SHA
+          ENV GITHUB_SHA=$GITHUB_SHA
+          RUN echo "test image built"
+          EOF
+
+      # The action should fail because image_tag contains a slash (full image reference not allowed)
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+          image_name: ${{ github.repository_owner }}/push-to-ghcr-test
+          dockerfile: ./tests/Dockerfile.test
+          context: .
+          repository: ghcr.io
+          image_tag: "ghcr.io/myuser/myimage:latest"
+
+      - name: Assert action failed due to invalid tag format
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action correctly failed when image_tag contains a slash (full image reference not allowed)"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action should have failed for invalid image_tag with slash"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

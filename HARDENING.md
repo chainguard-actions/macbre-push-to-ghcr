@@ -10,37 +10,39 @@
 
 **Harden Agent Version:** `2`
 
-Action **macbre--push-to-ghcr/v17** was hardened automatically. 24 finding(s) were identified and resolved across 3 iteration(s).
+Action **macbre--push-to-ghcr/v17** was hardened automatically. 24 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a): The `run:` block in action.yml directly interpolates multiple GitHub Actions expressions inside shell commands without routing them through env vars. Attacker-controllable values include: `${{ github.actor }}` (used in `docker login ghcr.io -u "${{ github.actor }}"`), `${{ github.event_name }}` (used in an `if` comparison), `${{ github.event.release.tag_name }}` (assigned to COMMIT_TAG), `${{ github.ref }}` (echoed), `${{ github.repository }}` (embedded in a URL), `${{ inputs.dockerfile }}` (passed to `--file`), `${{ inputs.build_arg }}` (passed to `--build-arg`), `${{ inputs.extra_args }}` (expanded directly into the docker build argument array), `${{ inputs.platforms }}` (passed to `--platform`), `${{ inputs.context }}` (passed as the build context path), and `${{ inputs.repository }}` (used in image tag strings and docker push commands). Any of these values can contain shell metacharacters that will be interpreted by bash before the shell ever sees them, enabling command injection.
+The composite action's single `run:` block directly interpolates numerous `${{ }}` expressions into shell commands (sub-rule a). Attacker-controllable values include: `${{ github.actor }}` used as a docker login username; `${{ github.event_name }}`, `${{ github.ref }}`, `${{ github.event.release.tag_name }}` used in conditionals and variable assignments; `${{ github.repository }}` embedded in a URL; and user-supplied inputs `${{ inputs.dockerfile }}`, `${{ inputs.build_arg }}`, `${{ inputs.extra_args }}`, `${{ inputs.platforms }}`, `${{ inputs.context }}`, `${{ inputs.repository }}` passed directly as shell arguments. Any of these can contain shell metacharacters (`;`, `|`, `&`, `$(...)`, etc.) that will be interpreted by the shell before quoting takes effect, enabling command injection. For example: `--file ${{ inputs.dockerfile }}`, `--build-arg ${{ inputs.build_arg }}`, `${{ inputs.extra_args }}`, `--platform ${{ inputs.platforms }}`, and `${{ inputs.context }}` are all unquoted and directly expanded into shell.
 
 Locations:
 
-- `action.yml:80`
-- `action.yml:88`
-- `action.yml:101`
-- `action.yml:113`
-- `action.yml:115`
-- `action.yml:131`
+- `action.yml:75`
+- `action.yml:83`
+- `action.yml:84`
+- `action.yml:85`
+- `action.yml:97`
+- `action.yml:103`
+- `action.yml:104`
+- `action.yml:121`
 - `action.yml:148`
-- `action.yml:151`
-- `action.yml:153`
 - `action.yml:155`
-- `action.yml:158`
+- `action.yml:157`
+- `action.yml:159`
+- `action.yml:161`
 - `action.yml:163`
 
 ### unpinned-uses (severity: high)
 
-Two `uses:` references in action.yml use mutable version tags instead of immutable 40-character commit SHA pins, making the action vulnerable to supply-chain attacks if the upstream tag is moved or the repository is compromised: `docker/setup-qemu-action@v3` and `docker/setup-buildx-action@v3`. These should be pinned to their full SHA digests, e.g. `docker/setup-qemu-action@<40-char-sha> # v3`.
+Two `uses:` references in action.yml use mutable version tags instead of pinned 40-character SHA digests, making the action vulnerable to supply-chain attacks if those tags are moved: `docker/setup-qemu-action@v3` and `docker/setup-buildx-action@v3`.
 
 Locations:
 
+- `action.yml:63`
 - `action.yml:68`
-- `action.yml:73`
 
 ### static-inline-injection (severity: high)
 
@@ -226,15 +228,13 @@ Locations:
 
 **Notes:**
 
-Fixed all security findings in hardened/action/action.yml:
-
-1. **unpinned-uses**: Pinned `docker/setup-qemu-action@v3` to SHA `c7c53464625b32c7a7e944ae62b3e17d2b600130` and `docker/setup-buildx-action@v3` to SHA `8d2750c68a42422c14e847fe6c8ac0403b4cbd6f`.
-
-2. **script-injection / static-inline-injection**: Moved all `${{ }}` expressions from the `run:` block into the `env:` block. Added env vars: `GITHUB_ACTOR`, `GITHUB_EVENT_NAME`, `GITHUB_REF`, `GITHUB_RELEASE_TAG_NAME`, `GITHUB_REPOSITORY`, `INPUT_DOCKERFILE`, `INPUT_BUILD_ARG`, `INPUT_EXTRA_ARGS`, `INPUT_PLATFORMS`, `INPUT_CONTEXT`, `INPUT_REPOSITORY`. The `run:` block now only uses `${VAR_NAME}` shell variable references.
-
-3. For `inputs.extra_args` (a list-type input), used the xargs-based tokenization pattern (`while IFS= read -r -d '' t; do ... done < <(printf '%s' "$VAR" | xargs printf '%s\0')`) to properly split it into an array while preserving quoted arguments and preventing injection.
-
-4. All `${{ }}` expressions in `if:` conditions and `env:` blocks were left as-is since those are safe (evaluated by GitHub Actions, not the shell).
+Fixed all findings in action.yml:
+1. Pinned docker/setup-qemu-action@v3 to @c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+2. Pinned docker/setup-buildx-action@v3 to @8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+3. Moved all ${{ }} expressions out of the run: block into the env: block: inputs.dockerfile→INPUT_DOCKERFILE, inputs.build_arg→INPUT_BUILD_ARG, inputs.extra_args→INPUT_EXTRA_ARGS, inputs.platforms→INPUT_PLATFORMS, inputs.context→INPUT_CONTEXT, inputs.repository→INPUT_REPOSITORY, github.event.release.tag_name→EVENT_RELEASE_TAG_NAME
+4. Replaced inline github.actor/event_name/ref/repository with standard GitHub env vars (GITHUB_ACTOR, GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_REPOSITORY)
+5. inputs.extra_args (a list/args input) is tokenized using the xargs+read loop pattern into EXTRA_ARGS_ARR to preserve argument boundaries
+6. All other input variables are double-quoted in the shell script to prevent word-splitting
 
 ### Iteration 2
 
@@ -242,25 +242,9 @@ Fixed all security findings in hardened/action/action.yml:
 
 **Notes:**
 
-Fixed all 5 script injection locations in action.yml:
-1. Replaced `for TAG in ${IMAGE_TAG_LIST}` with `IFS=',' read -ra IMAGE_TAG_LIST <<< "${IMAGE_TAG}"` and `for TAG in "${IMAGE_TAG_LIST[@]}"` — properly splits comma-separated tags into an array and iterates with quoting.
-2. Added double quotes around `${IMAGE_NAME}` in the `echo` command substitution: `echo "${IMAGE_NAME}"`.
-3. Added double quotes around both occurrences of `${DOCKER_IO_USER}` in `[ -z ${DOCKER_IO_USER} ]` tests: `[ -z "${DOCKER_IO_USER}" ]`.
-4. Added double quotes around the `--build-arg` values for `BUILD_DATE` and `GITHUB_SHA`: `--build-arg "BUILD_DATE=${BUILD_DATE}"` and `--build-arg "GITHUB_SHA=${GITHUB_SHA}"`.
-
-### Iteration 3
-
-**Fixes applied:** script-injection
-
-**Notes:**
-
-Fixed all unquoted variable expansions in the run: shell script in action.yml:
-1. `export GITHUB_URL="https://github.com/${GITHUB_REPOSITORY}"` - added quotes around value containing GITHUB_REPOSITORY
-2. `export COMMIT_TAG="${COMMIT_TAG//v/}"` - added quotes around bash parameter substitution
-3. `export COMMIT_TAG="${IMAGE_TAGS[0]}"` - added quotes around array element access
-4. All six `--label` arguments in COMMON_ARGS array now have their values double-quoted (org.label-schema.build-date, org.label-schema.vcs-url, org.label-schema.vcs-ref, org.opencontainers.image.created, org.opencontainers.image.source, org.opencontainers.image.revision)
-5. `DOCKER_IO_TAGS=(--tag "docker.io/${IMAGE_NAME}:${COMMIT_TAG}")` - added quotes around the tag value
-6. `docker push "docker.io/${IMAGE_NAME}:${TAG}"` - added quotes around the image reference
-
-All workflow-controllable values (GITHUB_REPOSITORY, IMAGE_NAME, COMMIT_TAG, GITHUB_URL, GITHUB_SHA, BUILD_DATE) are now properly double-quoted to prevent shell word-splitting and glob expansion.
+Fixed all 6 unquoted shell variable expansion locations in action.yml:
+1. Replaced `for TAG in ${IMAGE_TAG_LIST}` with a safe xargs-based tokenization loop (`while IFS= read -r -d '' TAG; done < <(printf '%s' "${IMAGE_TAG_LIST}" | xargs printf '%s\0')`) to properly handle the space-separated tag list without unquoted expansion.
+2. Quoted `${IMAGE_NAME}` inside the echo command substitution: `echo "${IMAGE_NAME}"`.
+3. Quoted `${DOCKER_IO_USER}` in both `[ -z ]` tests: `[ -z "${DOCKER_IO_USER}" ]`.
+4. Quoted the array element in DOCKER_IO_TAGS: `(--tag "docker.io/${IMAGE_NAME}:${COMMIT_TAG}")`.
 

@@ -6,12 +6,12 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 ## Versions
 
-| Version | Tag | Upstream commit |
-|---------|-----|-----------------|
-| v14 | [`v14`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v14) | [`91a23f5`](https://github.com/macbre/push-to-ghcr/commit/91a23f5ca90410345e37d8252ae43b0b89942c6f) |
-| v16 | [`v16`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v16) | [`29d48bf`](https://github.com/macbre/push-to-ghcr/commit/29d48bf1765f949865339ad1f37f2e68041b3204) |
-| v17 | [`v17`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v17) | [`2024e33`](https://github.com/macbre/push-to-ghcr/commit/2024e3307b11643712d00ef459b48ef7921dab08) |
-| v18 | [`v18`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v18) | [`de5b1f4`](https://github.com/macbre/push-to-ghcr/commit/de5b1f400829a79007e48b901ef7e92a82b6486e) |
+| Version | Tag | Upstream commit | Hardening report |
+|---------|-----|-----------------|------------------|
+| v14 | [`v14`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v14) | [`91a23f5`](https://github.com/macbre/push-to-ghcr/commit/91a23f5ca90410345e37d8252ae43b0b89942c6f) | [`HARDENING.md`](https://github.com/chainguard-actions/macbre-push-to-ghcr/blob/v14/HARDENING.md) |
+| v16 | [`v16`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v16) | [`29d48bf`](https://github.com/macbre/push-to-ghcr/commit/29d48bf1765f949865339ad1f37f2e68041b3204) | [`HARDENING.md`](https://github.com/chainguard-actions/macbre-push-to-ghcr/blob/v16/HARDENING.md) |
+| v17 | [`v17`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v17) | [`2024e33`](https://github.com/macbre/push-to-ghcr/commit/2024e3307b11643712d00ef459b48ef7921dab08) | [`HARDENING.md`](https://github.com/chainguard-actions/macbre-push-to-ghcr/blob/v17/HARDENING.md) |
+| v18 | [`v18`](https://github.com/chainguard-actions/macbre-push-to-ghcr/tree/v18) | [`de5b1f4`](https://github.com/macbre/push-to-ghcr/commit/de5b1f400829a79007e48b901ef7e92a82b6486e) | [`HARDENING.md`](https://github.com/chainguard-actions/macbre-push-to-ghcr/blob/v18/HARDENING.md) |
 
 ## Privacy
 

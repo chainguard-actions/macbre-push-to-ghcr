@@ -4,75 +4,41 @@
 
 > This file was generated automatically by the hardening agent.
 
-**Policy SHA:** `d636be7e43ef829af6e853da6b3c7566db9f72fe`
+**Policy SHA:** `374911c4be584df24e6da57af2d990570ef0f859`
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
 **Harden Agent Version:** `2`
 
-Action **macbre--push-to-ghcr/v16** was hardened automatically. 16 finding(s) were identified and resolved across 3 iteration(s).
+Action **macbre--push-to-ghcr/v16** was hardened automatically. 16 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-The run: block in action.yml directly interpolates multiple ${{ inputs.* }} and ${{ github.* }} expressions inside shell commands (sub-rule a). This is a composite action, so any calling workflow can supply attacker-controlled values that are substituted directly into the shell before execution, enabling command injection.
-
-Offending lines include:
-- `echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin`
-- `echo "Event received: '${{ github.event_name }}' (with a reference '${{ github.ref }}' / tag name '${{ github.event.release.tag_name }}')"`
-- `if [ "${{ github.event_name }}" = "release" ]; then`
-- `export COMMIT_TAG="${{ github.event.release.tag_name }}"`
-- `export GITHUB_URL=https://github.com/${{ github.repository }}`
-- `--file ${{ inputs.dockerfile }}`
-- `--cache-from ${{ inputs.repository }}/${IMAGE_NAME}:latest`
-- `--build-arg ${{ inputs.build_arg }}`
-- `--tag ${{ inputs.repository }}/${IMAGE_NAME}:${COMMIT_TAG}`
-- `${{ inputs.extra_args }}`
-- `${{ inputs.context }}`
-- `docker image inspect ${{ inputs.repository }}/${IMAGE_NAME}:${COMMIT_TAG}`
-- `docker push ${{ inputs.repository }}/${IMAGE_NAME}:${COMMIT_TAG}`
-- `export DOCKER_IO_USER="${{ github.actor }}"`
-
-All these values should be passed via env: variables and then referenced as quoted shell variables (e.g., "$VAR") instead of being interpolated directly.
+Rule (a): the composite step 'Log in to the Container registry' puts GitHub expressions straight into its run: script. Examples: `docker login ghcr.io -u "${{ github.actor }}"`, `echo "Event received: '${{ github.event_name }}' (with a reference '${{ github.ref }}' / tag name '${{ github.event.release.tag_name }}')"`, `export COMMIT_TAG="${{ github.event.release.tag_name }}"`, `export GITHUB_URL=https://github.com/${{ github.repository }}`, `--file ${{ inputs.dockerfile }}`, `--cache-from ${{ inputs.repository }}/...`, `--build-arg ${{ inputs.build_arg }}`, `${{ inputs.extra_args }}`, `${{ inputs.context }}`, and `docker push ${{ inputs.repository }}/...`. Inputs and the release tag name are substituted into the script before the shell runs, so they can inject shell commands.
 
 Locations:
 
-- `action.yml:68`
-- `action.yml:74`
-- `action.yml:77`
-- `action.yml:78`
-- `action.yml:87`
+- `action.yml:73`
+- `action.yml:80`
+- `action.yml:83`
+- `action.yml:100`
+- `action.yml:102`
+- `action.yml:108`
+- `action.yml:115`
+- `action.yml:119`
+
+### script-injection (severity: high)
+
+Rule (b): the same step expands env vars that hold workflow-controlled data without quotes. Examples: `if [ -z ${IMAGE_TAG} ]; then`, `export COMMIT_TAG=${IMAGE_TAG}`, `export IMAGE_NAME=$(echo ${IMAGE_NAME} | tr ...)`, `--tag docker.io/${IMAGE_NAME}:${COMMIT_TAG}`, `if [ -z ${DOCKER_IO_USER} ]; then`, and `docker push docker.io/${IMAGE_NAME}:${COMMIT_TAG}`. These values come from inputs.image_tag, inputs.image_name and inputs.docker_io_user.
+
+Locations:
+
+- `action.yml:86`
 - `action.yml:89`
-- `action.yml:95`
-- `action.yml:96`
-- `action.yml:99`
-- `action.yml:101`
-- `action.yml:103`
-- `action.yml:110`
-- `action.yml:120`
-- `action.yml:123`
-- `action.yml:126`
-- `action.yml:136`
-
-### broad-permissions (severity: medium)
-
-The workflow file .github/workflows/ci.yml sets `permissions: write-all` at the top level, granting all jobs overly broad write access to every GitHub API scope. This should be replaced with specific minimal permissions (e.g., `packages: write`, `contents: read`) required by each job.
-
-Locations:
-
-- `.github/workflows/ci.yml:10`
-
-### unpinned-uses (severity: high)
-
-All four jobs in .github/workflows/ci.yml use `actions/checkout@v4`, which is a mutable tag reference rather than a pinned full-length commit SHA. If the tag is moved (e.g., by a supply-chain compromise), the workflow will silently execute different code. Each reference should be pinned to a full 40-character commit SHA, e.g., `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4`.
-
-Locations:
-
-- `.github/workflows/ci.yml:17`
-- `.github/workflows/ci.yml:40`
-- `.github/workflows/ci.yml:60`
-- `.github/workflows/ci.yml:80`
+- `action.yml:94`
+- `action.yml:118`
 
 ### static-inline-injection (severity: high)
 
@@ -178,39 +144,132 @@ Locations:
 
 - `action.yml:145`
 
+### prior-fix (severity: high)
+
+Carried forward from this version's previous harden, which fixed it; fix it again unless the code no longer has the problem. The previous harden changed action.yml without recording a finding for it, and this analysis reported nothing there. Re-apply its security changes unless the code no longer needs them. The previous patch:
+```diff
+diff --git a/action.yml b/action.yml
+index 1360567..bf3b66c 100644
+--- a/action.yml
++++ b/action.yml
+@@ -5,49 +5,39 @@ description: "This action simplifies pushes of Docker images ot ghcr.io reposito
+ branding:
+   icon: "arrow-up-circle"
+   color: "blue"
+-  
+ inputs:
+-  github_token: 
+-     description: "Your secrets.GITHUB_TOKEN"
+-     required: true
+-
++  github_token:
++    description: "Your secrets.GITHUB_TOKEN"
++    required: true
+   image_name:
+     description: "Image name, e.g. my-user-name/my-repo (will be lowercased)"
+     required: true
+-
+   dockerfile:
+     description: "A path to the Dockerfile (if it's not in the repository's root directory)"
+     required: false
+     default: "./Dockerfile"
+-
+   context:
+     description: "A path to the context in which the build will happen, see https://docs.docker.com/engine/reference/commandline/build/"
+     required: false
+     default: "."
+-
+   repository:
+     description: "Docker repository to push an image to, defaults to ghcr.io"
+     required: true
+     default: "ghcr.io"
+-
+   docker_io_user:
+     description: "A username to use when pushing an image to docker.io (defaults to the github.actor)"
+     required: false
+-
+   docker_io_token:
+     description: "Your docker.io token created via https://hub.docker.com/settings/security"
+     required: false
+-  
+   image_tag:
+     description: Image tag, e.g. latest. Will overwrite the tag latest tag on a push, and have no effect on a release.
+     required: false
+-
+   # https://docs.docker.com/build/guide/build-args/
+   build_arg:
+     description: Additional build argument to be passed to the Dockerfile (e.g. NODE_AUTH_TOKEN=s3cr3t)
+     required: false
+     default: "FOO=bar"
+-
+   extra_args:
+     description: Additional arguments to be passed to "docker build", you can pass custom tags here for instance.
+     required: false
+@@ -55,6 +45,23 @@ inputs:
+ runs:
+   using: "composite"
+   steps:
+     # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
+     - name: Log in to the Container registry
+       shell: bash
+@@ -65,67 +72,85 @@ runs:
+         DOCKER_IO_TOKEN: ${{ inputs.docker_io_token }}
+         IMAGE_NAME: ${{ inputs.image_name }}
+         IMAGE_TAG: ${{ inputs.image_tag }}
+-
++        GITHUB_ACTOR: ${{ github.actor }}
++        GITHUB_EVENT_NAME: ${{ github.event_name }}
++        GITHUB_REF: ${{ github.ref }}
++        GITHUB_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
++        GITHUB_REPOSITORY: ${{ github.repository }}
++        INPUT_DOCKERFILE: ${{ inputs.dockerfile }}
++        INPUT_REPOSITORY: ${{ inputs.repository }}
++        INPUT_CACHE_FROM_REPO: ${{ inputs.repository }}
++        INPUT_BUILD_ARG: ${{ inputs.build_arg }}
++        INPUT_EXTRA_ARGS: ${{ inputs.extra_args }}
++        INPUT_CONTEXT: ${{ inputs.context }}
+       run: |
+         echo "Using $(docker -v)"
+ 
+         echo "::group::Logging into the GitHub Container registry (ghcr.io) ..."
+-        echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
++        echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+         echo "::endgroup::"
+ 
+         echo "::group::Set commit tag and image name"
+         # github.ref: For workflows triggered by pull_request, this is the pull request merge branch.
+         #             For workflows triggered by release, this is the release tag created.
+         # https://docs.github.com/en/actions/reference/contexts-reference
+-        echo "Event received: '${{ github.event_name }}' (with a reference '${{ github.ref }}' / tag name '${{ github.event.release.tag_name }}')"
++        echo "Event received: '$GITHUB_EVENT_NAME' (with a reference '$GITHUB_REF' / tag name '$GITHUB_RELEASE_TAG_NAME')"
+ 
+-        if [ "${{ github.event_name }}" = "release" ]; then
+-          export COMMIT_TAG="${{ github.event.release.tag_name }}"
++        if [ "$GITHUB_EVENT_NAME" = "release" ]; then
++          export COMMIT_TAG="$GITHUB_RELEASE_TAG_NAME"
+           ex
+... (truncated)
+```
+
+Locations:
+
+- `action.yml`
+
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, static-inline-injection, broad-permissions, unpinned-uses
+**Fixes applied:** script-injection, static-inline-injection, prior-fix
 
 **Notes:**
 
-Fixed action.yml: moved all ${{ github.* }} and ${{ inputs.* }} expressions from run: blocks into the step's env: block. Added env vars: GITHUB_ACTOR, GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_RELEASE_TAG_NAME, GITHUB_REPOSITORY, INPUT_DOCKERFILE, INPUT_REPOSITORY, INPUT_CACHE_FROM_REPO, INPUT_BUILD_ARG, INPUT_EXTRA_ARGS, INPUT_CONTEXT. The extra_args input is tokenized via xargs into a bash array to handle quoted sub-commands safely. Fixed ci.yml: replaced 'permissions: write-all' with 'contents: read' and 'packages: write'; pinned all four actions/checkout@v4 references to SHA 11d5960a326750d5838078e36cf38b85af677262 # v4.
+Rewrote action.yml's single composite step so the run: script has no ${{ }} expressions left. The github context values (actor, event_name, ref, release tag_name, repository) and the inputs (dockerfile, repository, build_arg, extra_args, context) now go through the step's env: block and are double-quoted wherever they expand. The env vars that were already there (IMAGE_TAG, IMAGE_NAME, DOCKER_IO_USER) are now quoted in tests and assignments. extra_args was pasted into the script by upstream, so it is split with the guarded, quote-aware xargs pattern into a bash array. build_arg is passed as one --build-arg value and dropped when empty; context uses ${VAR:+"$VAR"}. All other behavior is unchanged.
 
-### Iteration 2
+### Iteration 1
 
-**Fixes applied:** script-injection
-
-**Notes:**
-
-Fixed all unquoted shell variable expansions in both action.yml and .github/workflows/ci.yml:
-
-**action.yml fixes:**
-- Quoted `${IMAGE_TAG}` in `if [ -z ... ]` test and assignment
-- Quoted `${IMAGE_NAME}` in `echo ... | tr` pipeline
-- Quoted `docker.io/${IMAGE_NAME}:${COMMIT_TAG}` in `--tag` argument to docker build
-- Quoted `${DOCKER_IO_USER}` in `if [ -z ... ]` test
-- Quoted `docker.io/${IMAGE_NAME}:${COMMIT_TAG}` in `docker push` command
-
-**ci.yml fixes:**
-- Quoted all `${IMAGE}` expansions across all four jobs (ghcr, ghcr_with_extra_args, ghcr_with_dockerfile_in_subdir, ghcr_and_docker_io) in grep, docker rmi, docker pull, and docker image inspect commands
-
-### Iteration 3
-
-**Fixes applied:** script-injection
+**Fixes applied:** publish-gate
 
 **Notes:**
 
-Fixed unquoted shell variable expansions in the docker build command in action.yml. All --build-arg and --label arguments that used unquoted ${VAR} expansions have been wrapped in double quotes: --build-arg "BUILD_DATE=${BUILD_DATE}", --build-arg "GITHUB_SHA=${GITHUB_SHA}", --label "org.label-schema.build-date=${BUILD_DATE}", --label "org.label-schema.vcs-url=${GITHUB_URL}", --label "org.label-schema.vcs-ref=${GITHUB_SHA}", --label "org.opencontainers.image.created=${BUILD_DATE}", --label "org.opencontainers.image.source=${GITHUB_URL}", and --label "org.opencontainers.image.revision=${GITHUB_SHA}". The highest-risk fix was quoting ${GITHUB_URL} since it is constructed from GITHUB_REPOSITORY (a workflow-controllable value via github.repository), which could contain shell metacharacters that would be interpreted by the shell.
+Added '|| true' to the BUILD_DATE assignment at action.yml:110. If date fails, the step now carries on as it did upstream instead of stopping.
 

@@ -4,9 +4,8 @@
   "version": "v18",
   "commit_sha": "de5b1f400829a79007e48b901ef7e92a82b6486e",
   "url": "https://github.com/macbre/push-to-ghcr",
-  "policy_sha": "d636be7e43ef829af6e853da6b3c7566db9f72fe",
+  "policy_sha": "374911c4be584df24e6da57af2d990570ef0f859",
   "test_policy_sha": "843adf9e4b8f85d0c08b27b9d0b09dd094b54702",
   "test_agent_version": "2",
-  "harden_agent_version": "2",
-  "dependency_fingerprint": "sha256:cf366b792e1180482a5ed8e03f53135222bc2f236cf2aaaa86f1be3fe4922c39"
+  "harden_agent_version": "2"
 }
